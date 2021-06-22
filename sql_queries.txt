@@ -1,0 +1,182 @@
+QUESTION #1
+
+SELECT c.name AS category_name,
+       COUNT(*) AS rental_count
+FROM rental r
+JOIN inventory i ON r.inventory_id = i.inventory_id
+JOIN film f ON i.film_id = f.film_id
+JOIN film_category fc ON f.film_id = fc.film_id
+JOIN category c ON fc.category_id = c.category_id
+WHERE c.name = 'Animation'
+  OR c.name = 'Children'
+  OR c.name = 'Classics'
+  OR c.name = 'Comedy'
+  OR c.name = 'Family'
+  OR c.name = 'Music'
+GROUP BY 1
+ORDER BY 2 DESC;
+
+
+QUESTION #2
+
+SELECT standard_quartile,
+       COUNT(*)
+FROM
+  (SELECT f.title AS film_title,
+          c.name AS category_name,
+          f.rental_duration AS rental_duration,
+          COUNT(*) AS total_count,
+          NTILE(4) OVER (
+                         ORDER BY rental_duration) AS standard_quartile
+   FROM film f
+   JOIN film_category fc ON f.film_id = fc.film_id
+   JOIN category c ON fc.category_id = c.category_id
+   GROUP BY 1,
+            2,
+            3) t1
+WHERE category_name = 'Animation'
+  OR category_name = 'Children'
+  OR category_name = 'Classics'
+  OR category_name = 'Comedy'
+  OR category_name = 'Family'
+  OR category_name = 'Music'
+GROUP BY 1;
+
+QUESTION #3
+
+SELECT DISTINCT(category_name),
+       standard_quartile,
+       COUNT(film_title) OVER (PARTITION BY category_name,
+                                            standard_quartile
+                               ORDER BY standard_quartile) AS COUNT
+FROM
+  (SELECT f.title AS film_title,
+          c.name AS category_name,
+          f.rental_duration AS rental_duration,
+          NTILE(4) OVER (
+                         ORDER BY rental_duration) AS standard_quartile
+   FROM film f
+   JOIN film_category fc ON f.film_id = fc.film_id
+   JOIN category c ON fc.category_id = c.category_id
+   WHERE c.name = 'Animation'
+     OR c.name = 'Children'
+     OR c.name = 'Classics'
+     OR c.name = 'Comedy'
+     OR c.name = 'Family'
+     OR c.name = 'Music') t1
+GROUP BY 1,
+         2,
+         rental_duration,
+         film_title
+ORDER BY 1,
+         2;
+
+QUESTION #4
+
+SELECT Rental_month,
+       Rental_year,
+       Store_id,
+       count_rentals
+FROM
+  (SELECT DATE_PART('month', r.rental_date) AS Rental_month,
+          DATE_PART('year', r.rental_date) AS Rental_year,
+          c.store_id AS Store_id,
+          COUNT(r.rental_id) OVER (PARTITION BY c.store_id,
+                                                DATE_PART('month', r.rental_date)
+                                   ORDER BY DATE_PART('month', r.rental_date)) AS Count_rentals
+   FROM rental r
+   JOIN customer c ON r.customer_id = c.customer_id
+   ORDER BY 4 DESC) t1
+GROUP BY 1,
+         2,
+         3,
+         4
+ORDER BY 4 DESC;
+
+QUESTION #5
+
+WITH tab AS
+  (SELECT full_name,
+          customer_id,
+          total_payments
+   FROM
+     (SELECT c.first_name || ' ' || c.last_name AS full_name,
+             c.customer_id AS customer_id,
+             SUM(p.amount) OVER (PARTITION BY c.last_name) AS total_payments
+      FROM customer c
+      JOIN payment p ON p.customer_id = c.customer_id) t1
+   GROUP BY 1,
+            2,
+            3
+   ORDER BY 3 DESC
+   LIMIT 10),
+     tab2 AS
+  (SELECT c.customer_id,
+          DATE_TRUNC('month', p.payment_date) AS payment_month,
+          COUNT(p.payment_id) OVER (PARTITION BY DATE_TRUNC('month', p.payment_date),
+                                                 p.customer_id
+                                    ORDER BY DATE_TRUNC('month', p.payment_date)) AS payment_count_per_month,
+                                   SUM(p.amount) OVER (PARTITION BY DATE_TRUNC('month', p.payment_date),
+                                                                    p.customer_id
+                                                       ORDER BY DATE_TRUNC('month', p.payment_date)) AS payment_total_per_month
+   FROM customer c
+   JOIN payment p ON p.customer_id = c.customer_id
+   WHERE DATE_PART('year', p.payment_date) = 2007)
+SELECT DISTINCT(tab.full_name),
+       SUM(tab2.payment_count_per_month) OVER (PARTITION BY tab.full_name
+                                               ORDER BY DATE_TRUNC('year', tab2.payment_month)) AS total_annual_payment_count,
+                                              SUM(tab2.payment_total_per_month) OVER (PARTITION BY tab.full_name
+                                                                                      ORDER BY DATE_TRUNC('year', tab2.payment_month)) AS total_annual_payment_amount
+FROM tab
+JOIN tab2 ON tab.customer_id = tab2.customer_id
+GROUP BY tab.full_name,
+         tab2.payment_count_per_month,
+         tab2.payment_month,
+         tab2.payment_total_per_month
+ORDER BY 1;
+
+
+  QUESTION #6
+
+  WITH tab AS
+    (SELECT full_name,
+            customer_id,
+            total_payments
+     FROM
+       (SELECT c.first_name || ' ' || c.last_name AS full_name,
+               c.customer_id AS customer_id,
+               SUM(p.amount) OVER (PARTITION BY c.last_name) AS total_payments
+        FROM customer c
+        JOIN payment p ON p.customer_id = c.customer_id) t1
+     GROUP BY 1,
+              2,
+              3
+     ORDER BY 3 DESC
+     LIMIT 10),
+       tab2 AS
+    (SELECT customer_id,
+            payment_month,
+            payment_total_per_month,
+            payment_total_per_month - LAG(payment_total_per_month) OVER (PARTITION BY customer_id
+                                                                         ORDER BY payment_month) AS monthly_difference
+     FROM
+       (SELECT c.customer_id AS customer_id,
+               DATE_TRUNC('month', p.payment_date) AS payment_month,
+               SUM(p.amount) OVER (PARTITION BY DATE_TRUNC('month', p.payment_date),
+                                                p.customer_id
+                                   ORDER BY DATE_TRUNC('month', p.payment_date)) AS payment_total_per_month
+        FROM customer c
+        JOIN payment p ON p.customer_id = c.customer_id
+        WHERE DATE_PART('year', p.payment_date) = 2007) t2
+     GROUP BY 1,
+              2,
+              3)
+  SELECT DISTINCT(tab.full_name),
+         AVG(tab2.monthly_difference) OVER (PARTITION BY tab.full_name
+                                            ORDER BY DATE_TRUNC('year', tab2.payment_month)) AS average_payment_variance
+  FROM tab
+  JOIN tab2 ON tab.customer_id = tab2.customer_id
+  GROUP BY 1,
+           tab2.monthly_difference,
+           tab2.payment_month
+  ORDER BY 1;
